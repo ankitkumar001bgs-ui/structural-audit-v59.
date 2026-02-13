@@ -193,11 +193,12 @@ with tab1:
                 pdf.add_page()
                 pdf.multi_cell(0, 6, txt=ai_resp.encode('latin-1', 'ignore').decode('latin-1'))
             
-            # --- FINAL FIX: PDF generated outside the loop ---
-            pdf_data = pdf.output(dest='S')
+            # --- UPDATED PDF DOWNLOAD SECTION ---
+            # Direct output for bytes compatibility
+            pdf_data = pdf.output() 
             st.download_button(
                 label="📥 Download PDF Report",
-                data=bytes(pdf_data),
+                data=pdf_data,
                 file_name="Audit_Report.pdf",
                 mime="application/pdf",
                 use_container_width=True
@@ -213,3 +214,4 @@ with tab2:
 with tab3:
     history = pd.read_sql_query("SELECT * FROM audit_logs ORDER BY date DESC", conn)
     st.dataframe(history, use_container_width=True)
+
