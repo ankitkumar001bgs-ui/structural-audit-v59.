@@ -184,7 +184,6 @@ with tab1:
                 pdf.set_font("Arial", size=10)
                 pdf.cell(0, 8, f"Location: {loc} | Width: {w}mm | Depth: {depth}mm", ln=1)
                 
-                # --- FIXED LINE 213: Removed fig.write_image to avoid Kaleido error ---
                 o_p, m_p, h_p = f"o_{i}.jpg", f"m_{i}.jpg", f"h_{i}.jpg"
                 cv2.imwrite(o_p, img); cv2.imwrite(m_p, m_img); cv2.imwrite(h_p, h_img)
                 
@@ -194,7 +193,7 @@ with tab1:
                 pdf.add_page()
                 pdf.multi_cell(0, 6, txt=ai_resp.encode('latin-1', 'ignore').decode('latin-1'))
             
-            # --- FIXED LINE 222-223: Proper PDF output and download ---
+            # --- FINAL FIX: PDF generated outside the loop ---
             pdf_data = pdf.output(dest='S')
             st.download_button(
                 label="📥 Download PDF Report",
@@ -214,4 +213,3 @@ with tab2:
 with tab3:
     history = pd.read_sql_query("SELECT * FROM audit_logs ORDER BY date DESC", conn)
     st.dataframe(history, use_container_width=True)
-    
