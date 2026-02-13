@@ -210,7 +210,7 @@ with tab1:
                 pdf.cell(0, 8, f"Priority: {priority} | Estimate: Rs. {total_repair}", ln=1)
                 
                 o_p, m_p, h_p, g_p = f"o_{i}.jpg", f"m_{i}.jpg", f"h_{i}.jpg", f"g_{i}.png"
-                cv2.imwrite(o_p, img); cv2.imwrite(m_p, m_img); cv2.imwrite(h_p, h_img); fig.write_image(g_p)
+                cv2.imwrite(o_p, img); cv2.imwrite(m_p, m_img); cv2.imwrite(h_p, h_img);
                 
                 pdf.image(o_p, 10, 40, 90, 60); pdf.image(m_p, 105, 40, 90, 60)
                 pdf.image(h_p, 10, 105, 90, 60); pdf.image(g_p, 105, 105, 90, 60)
@@ -219,7 +219,14 @@ with tab1:
                 pdf.set_font("Arial", size=10)
                 pdf.multi_cell(0, 6, txt=ai_resp.encode('latin-1', 'ignore').decode('latin-1'))
                 
-            st.download_button("📥 Download PDF Report", bytes(pdf.output(dest='S')), "Audit_Report.pdf", use_container_width=True)
+           # Purani line hata kar ye likhiye:
+pdf_output = pdf.output(dest='S') # Pehle PDF data generate karein
+st.download_button(
+    label="📥 Download PDF Report",
+    data=bytes(pdf_output),
+    file_name="Audit_Report.pdf",
+    mime="application/pdf"
+)
 
 with tab2: # Live Cam (v58 with depth info)
     live = st.camera_input("Scan Crack")
