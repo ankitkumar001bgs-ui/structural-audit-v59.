@@ -11,7 +11,7 @@ import io
 import os
 import gc
 
-# --- 1. SETUP & THEME (v58 Base) ---
+# --- 1. SETUP & THEME (v59 Final) ---
 st.set_page_config(page_title="Structural AI Audit Pro v59", layout="wide")
 
 st.markdown("""
@@ -38,7 +38,7 @@ conn.commit()
 GROQ_API_KEY = "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"
 client = Groq(api_key=GROQ_API_KEY)
 
-# --- 2. SIDEBAR (v58 Same) ---
+# --- 2. SIDEBAR ---
 with st.sidebar:
     st.header("🛡️ Engineering Panel")
     if st.button("🔄 Clear System Cache", use_container_width=True):
@@ -109,10 +109,7 @@ def generate_stress_curve(mm_w, material, location):
     E_base = 35000 if material == "Concrete" else 5000 
     loc_factor = {"Column": 1.5, "Beam": 1.3, "Slab": 1.0, "Wall": 0.8}.get(location, 0.6)
     E = E_base * loc_factor
-    if material == "Concrete":
-        failure_strain = 0.002 + (mm_w / 60) 
-    else:
-        failure_strain = 0.004 + (mm_w / 50) 
+    failure_strain = 0.002 + (mm_w / 60) if material == "Concrete" else 0.004 + (mm_w / 50)
     strain = np.linspace(0, failure_strain * 1.5, 100)
     stress = np.maximum(E * strain * (1 - (strain / (2.2 * failure_strain))), 0)
     fig = go.Figure()
@@ -191,21 +188,26 @@ with tab1:
                 pdf.image(h_p, 10, 105, 90, 60)
                 
                 pdf.add_page()
-                pdf.multi_cell(0, 6, txt=ai_resp.encode('latin-1', 'ignore').decode('latin-1'))
+                # Encoding Fix for AI Text
+                clean_text = ai_resp.encode('latin-1', 'replace').decode('latin-1')
+                pdf.multi_cell(0, 6, txt=clean_text)
             
-            # --- FINAL FIXED DOWNLOAD SECTION ---
+            # --- FINAL ROBUST PDF DOWNLOAD FIX ---
             try:
-                # Use 'S' destination to get bytes for the download button
+                # Use 'S' to output as string/bytes
                 pdf_output = pdf.output(dest='S')
+                # Force convert to bytes if it's a string
+                pdf_bytes = pdf_output.encode('latin-1') if isinstance(pdf_output, str) else pdf_output
+                
                 st.download_button(
                     label="📥 Download PDF Report",
-                    data=bytes(pdf_output),
+                    data=pdf_bytes,
                     file_name="Audit_Report.pdf",
                     mime="application/pdf",
                     use_container_width=True
                 )
             except Exception as e:
-                st.error(f"PDF Error: {str(e)}")
+                st.error(f"PDF Final Error: {str(e)}")
 
 with tab2:
     live = st.camera_input("Scan Crack")
@@ -217,4 +219,4 @@ with tab2:
 with tab3:
     history = pd.read_sql_query("SELECT * FROM audit_logs ORDER BY date DESC", conn)
     st.dataframe(history, use_container_width=True)
-    
+
