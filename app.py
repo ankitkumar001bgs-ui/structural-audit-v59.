@@ -193,16 +193,19 @@ with tab1:
                 pdf.add_page()
                 pdf.multi_cell(0, 6, txt=ai_resp.encode('latin-1', 'ignore').decode('latin-1'))
             
-            # --- UPDATED PDF DOWNLOAD SECTION ---
-            # Direct output for bytes compatibility
-            pdf_data = pdf.output() 
-            st.download_button(
-                label="📥 Download PDF Report",
-                data=pdf_data,
-                file_name="Audit_Report.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
+            # --- FINAL FIXED DOWNLOAD SECTION ---
+            try:
+                # Use 'S' destination to get bytes for the download button
+                pdf_output = pdf.output(dest='S')
+                st.download_button(
+                    label="📥 Download PDF Report",
+                    data=bytes(pdf_output),
+                    file_name="Audit_Report.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"PDF Error: {str(e)}")
 
 with tab2:
     live = st.camera_input("Scan Crack")
@@ -214,4 +217,4 @@ with tab2:
 with tab3:
     history = pd.read_sql_query("SELECT * FROM audit_logs ORDER BY date DESC", conn)
     st.dataframe(history, use_container_width=True)
-
+    
