@@ -26,7 +26,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🏗️ Structural Audit AI Portal v59")
+st.title("AI-Powered Structural Crack Detection System")
 
 # Database Setup
 conn = sqlite3.connect('structural_master_v59.db', check_same_thread=False)
