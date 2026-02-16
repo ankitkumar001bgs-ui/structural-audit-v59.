@@ -57,7 +57,7 @@ with st.sidebar:
     calib = st.slider("Calibration", 0.01, 0.10, 0.05)
     sens = st.slider("Precision", 0.05, 1.0, 0.30)
 
-# --- 3. CORE LOGIC (Fixed Length Accuracy with arcLength) ---
+# --- 3. CORE LOGIC (Improved Length Precision) ---
 def process_analysis(img, sensitivity, calib):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (7, 7), 0)
@@ -76,11 +76,10 @@ def process_analysis(img, sensitivity, calib):
         if w_rect > 1.5 and h_rect > 1.5: 
             curr_w = min(w_rect, h_rect)
             
-            # --- FIX: ACCURATE LENGTH CALCULATION ---
-            # arcLength crack ki poori curve line ko naapta hai, box ko nahi.
-            # True/False batata hai ki contour closed hai ya nahi.
-            arc_len = cv2.arcLength(cnt, False)
-            curr_l = arc_len / 2  # Dividing by 2 because contour covers both sides of the crack line
+            # --- FIX: IMPROVED LENGTH ACCURACY ---
+            # arcLength crack ki curve line ko poora naapta hai.
+            # Ise 2 se divide kiya kyunki contour crack ke dono side banta hai.
+            curr_l = cv2.arcLength(cnt, False) / 2
             
             if curr_w > max_w_px: max_w_px = curr_w
             total_len_px += curr_l 
@@ -104,7 +103,7 @@ def process_analysis(img, sensitivity, calib):
         avg_crack = np.mean(crack_pixels)
         avg_bg = np.mean(gray)
         contrast = (avg_bg - avg_crack) / (avg_bg + 1)
-        estimated_depth = round(mm_w * (0.8 + contrast), 2)
+        estimated_depth = round(mm_w * (0.8 + contrast), 2) 
     else:
         estimated_depth = round(mm_w * 0.6, 2)
     
@@ -185,38 +184,20 @@ with tab1:
                 conn.commit()
             
                 pdf.add_page()
-                pdf.set_font("Arial", 'B', 16)
-                pdf.cell(0, 10, "STRUCTURAL CRACK REPORT", 0, 1, 'C')
-                pdf.set_font("Arial", size=12)
-                pdf.cell(0, 8, f"Report for: {f.name}", 0, 1, 'L')
+                pdf.set_font("Arial", 'B', 16); pdf.cell(0, 10, "STRUCTURAL CRACK REPORT", 0, 1, 'C')
+                pdf.set_font("Arial", size=12); pdf.cell(0, 8, f"Report for: {f.name}", 0, 1, 'L')
                 pdf.cell(0, 8, f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", 0, 1, 'L')
                 pdf.cell(0, 8, f"Location: {loc} | Material: {mat}", 0, 1, 'L')
                 pdf.cell(0, 8, f"Width: {w}mm | Length: {l}mm | Depth: {depth}mm", 0, 1, 'L')
                 pdf.cell(0, 8, f"Priority: {p_text} | Estimated Cost: Rs. {total_repair}", 0, 1, 'L')
                 pdf.ln(5)
 
-                original_img_path = f"temp_original_{i}.png"
-                marked_img_path = f"temp_marked_{i}.png"
-                heatmap_img_path = f"temp_heatmap_{i}.png"
-                
-                cv2.imwrite(original_img_path, img)
-                cv2.imwrite(marked_img_path, m_img)
-                cv2.imwrite(heatmap_img_path, h_img)
-                
-                pdf.image(original_img_path, x=10, y=pdf.get_y(), w=60)
-                pdf.image(marked_img_path, x=75, y=pdf.get_y(), w=60)
-                pdf.image(heatmap_img_path, x=140, y=pdf.get_y(), w=60)
-                pdf.ln(70)
-
-                pdf.set_font("Arial", 'B', 12)
-                pdf.cell(0, 10, "AI Analysis & Recommendations:", 0, 1, 'L')
-                pdf.set_font("Arial", size=10)
-                clean_text = ai_resp.encode('latin-1', 'replace').decode('latin-1')
-                pdf.multi_cell(0, 5, txt=clean_text)
-                
-                os.remove(original_img_path)
-                os.remove(marked_img_path)
-                os.remove(heatmap_img_path)
+                o_p = f"temp_o_{i}.png"; m_p = f"temp_m_{i}.png"; h_p = f"temp_h_{i}.png"
+                cv2.imwrite(o_p, img); cv2.imwrite(m_p, m_img); cv2.imwrite(h_p, h_img)
+                pdf.image(o_p, x=10, y=pdf.get_y(), w=60); pdf.image(m_p, x=75, y=pdf.get_y(), w=60); pdf.image(h_p, x=140, y=pdf.get_y(), w=60); pdf.ln(70)
+                pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, "AI Analysis & Recommendations:", 0, 1, 'L')
+                pdf.set_font("Arial", size=10); clean_text = ai_resp.encode('latin-1', 'replace').decode('latin-1'); pdf.multi_cell(0, 5, txt=clean_text)
+                os.remove(o_p); os.remove(m_p); os.remove(h_p)
             
             try:
                 pdf_output = pdf.output(dest='S')
@@ -237,32 +218,23 @@ with tab2:
     if webrtc_ctx.video_receiver:
         if st.button("📸 Capture & Analyze Snapshot", use_container_width=True):
             try:
-                frame = webrtc_ctx.video_receiver.get_frame()
-                img_usb = frame.to_ndarray(format="bgr24")
-                
+                frame = webrtc_ctx.video_receiver.get_frame(); img_usb = frame.to_ndarray(format="bgr24")
                 m_usb, h_usb, w, l, area, depth = process_analysis(img_usb, sens, calib)
                 priority, emoji, p_text = get_priority_v54(w, depth, mat_l)
                 total_repair = round((area * custom_rate * (1.5 if priority=="MEDIUM" else 2.5 if priority=="HIGH" else 1.0)) + base_visit_fee, 2)
-                
-                st.divider()
-                st.subheader(f"Live Result: {emoji} {p_text}")
-                m1, m2, m3, m4, m5 = st.columns(5)
-                m1.metric("Width", f"{w} mm"); m2.metric("Length", f"{l} mm"); m3.metric("Depth", f"{depth} mm"); m4.metric("Status", p_text); m5.metric("Estimate", f"Rs. {total_repair}")
-                
+                st.divider(); st.subheader(f"Live Result: {emoji} {p_text}")
+                m1, m2, m3, m4, m5 = st.columns(5); m1.metric("Width", f"{w} mm"); m2.metric("Length", f"{l} mm"); m3.metric("Depth", f"{depth} mm"); m4.metric("Status", p_text); m5.metric("Estimate", f"Rs. {total_repair}")
                 st.image([m_usb, h_usb], caption=["Marked Detection", "Heatmap"], width=350)
                 st.plotly_chart(generate_stress_curve(w, mat_l, loc_l), use_container_width=True)
-                
-                prompt_l = f"Analyze {w}mm width, {l}mm length and {depth}mm depth crack on {loc_l} ({mat_l}). Cause & Repair?"
-                ai_resp_l = client.chat.completions.create(messages=[{"role":"user","content":prompt_l}], model="llama-3.1-8b-instant").choices[0].message.content
+                ai_resp_l = client.chat.completions.create(messages=[{"role":"user","content":f"Analyze {w}mm x {l}mm crack?"}], model="llama-3.1-8b-instant").choices[0].message.content
                 st.info(ai_resp_l)
-                
-                c.execute("INSERT INTO audit_logs VALUES (?,?,?,?,?,?,?,?,?,?)", 
-                         (datetime.now().strftime('%Y-%m-%d'), datetime.now().strftime('%H:%M:%S'), loc_l, mat_l, f"{w}mm", f"{l}mm", f"{depth}mm", priority, f"Rs. {total_repair}", ai_resp_l))
-                conn.commit()
-                st.success("Analysis saved to History!")
+                c.execute("INSERT INTO audit_logs VALUES (?,?,?,?,?,?,?,?,?,?)", (datetime.now().strftime('%Y-%m-%d'), datetime.now().strftime('%H:%M:%S'), loc_l, mat_l, f"{w}mm", f"{l}mm", f"{depth}mm", priority, f"Rs. {total_repair}", ai_resp_l))
+                conn.commit(); st.success("Analysis saved to History!")
             except Exception as e:
                 st.error(f"Analysis Error: {e}")
-    
+    else:
+        st.warning("Waiting for USB Camera to be ready.")
+        
     st.divider()
     live = st.camera_input("Default Camera (Mobile/Front)")
     if live:
@@ -272,6 +244,7 @@ with tab2:
 
 with tab3:
     history = pd.read_sql_query("SELECT * FROM audit_logs ORDER BY date DESC", conn)
-    display_columns = ['date', 'time', 'location', 'material', 'width', 'length', 'depth', 'priority', 'cost', 'details']
-    st.dataframe(history[display_columns], use_container_width=True)
+    if 'length' not in history.columns: history['length'] = 'N/A' 
+    st.dataframe(history[['date', 'time', 'location', 'material', 'width', 'length', 'depth', 'priority', 'cost', 'details']], use_container_width=True)
+
 
