@@ -10,6 +10,8 @@ import plotly.graph_objects as go
 import io
 import os
 import gc
+# Nayi libraries for USB Camera
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 
 # --- 1. SETUP & THEME (v59 Final) ---
 st.set_page_config(page_title="Structural AI Audit Pro v59", layout="wide")
@@ -132,7 +134,7 @@ def get_priority_v54(width, depth, material):
         else: return "HIGH", "🔴", "CRITICAL!"
 
 # --- 4. TABS UI ---
-tab1, tab2, tab3 = st.tabs(["🚀 Batch Audit", "📸 Live Cam", "📜 History"])
+tab1, tab2, tab3 = st.tabs(["🚀 Batch Audit", "📸 USB Live Cam", "📜 History"])
 
 with tab1:
     files = st.file_uploader("Upload Crack Images", accept_multiple_files=True, key="file_uploader_v59")
@@ -188,29 +190,39 @@ with tab1:
                 pdf.image(h_p, 10, 105, 90, 60)
                 
                 pdf.add_page()
-                # Encoding Fix for AI Text
                 clean_text = ai_resp.encode('latin-1', 'replace').decode('latin-1')
                 pdf.multi_cell(0, 6, txt=clean_text)
             
-            # --- FINAL ROBUST PDF DOWNLOAD FIX ---
             try:
-                # Use 'S' to output as string/bytes
                 pdf_output = pdf.output(dest='S')
-                # Force convert to bytes if it's a string
                 pdf_bytes = pdf_output.encode('latin-1') if isinstance(pdf_output, str) else pdf_output
-                
-                st.download_button(
-                    label="📥 Download PDF Report",
-                    data=pdf_bytes,
-                    file_name="Audit_Report.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
+                st.download_button(label="📥 Download PDF Report", data=pdf_bytes, file_name="Audit_Report.pdf", mime="application/pdf", use_container_width=True)
             except Exception as e:
                 st.error(f"PDF Final Error: {str(e)}")
 
 with tab2:
-    live = st.camera_input("Scan Crack")
+    st.subheader("🔌 USB External Camera")
+    # USB Camera configuration
+    rtc_config = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
+    webrtc_ctx = webrtc_streamer(
+        key="usb-cam",
+        mode=WebRtcMode.SENDRECV,
+        rtc_configuration=rtc_config,
+        media_stream_constraints={"video": True, "audio": False},
+    )
+    
+    if webrtc_ctx.video_receiver:
+        if st.button("📸 Capture Snapshot from USB"):
+            try:
+                frame = webrtc_ctx.video_receiver.get_frame()
+                img_usb = frame.to_ndarray(format="bgr24")
+                m_usb, _, w_usb, _, _, d_usb = process_analysis(img_usb, sens, calib)
+                st.image(m_usb, caption=f"USB Result: {w_usb}mm Width", use_column_width=True)
+            except Exception as e:
+                st.error(f"Snapshot Error: {e}")
+    st.divider()
+    # Purana mobile camera input bhi rakha hai backup ke liye
+    live = st.camera_input("Default Camera (Mobile/Front)")
     if live:
         img_l = cv2.imdecode(np.frombuffer(live.read(), np.uint8), 1)
         m_l, _, w_l, _, _, d_l = process_analysis(img_l, sens, calib)
@@ -219,4 +231,5 @@ with tab2:
 with tab3:
     history = pd.read_sql_query("SELECT * FROM audit_logs ORDER BY date DESC", conn)
     st.dataframe(history, use_container_width=True)
+
 
