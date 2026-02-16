@@ -202,13 +202,16 @@ with tab1:
 
 with tab2:
     st.subheader("🔌 USB External Camera")
-    # USB Camera configuration
-    rtc_config = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
+    # IMPROVED RTC Config (For better USB detection)
+    rtc_config = RTCConfiguration(
+        {"iceServers": [{"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}]}
+    )
     webrtc_ctx = webrtc_streamer(
-        key="usb-cam",
+        key="usb-cam-v59",
         mode=WebRtcMode.SENDRECV,
         rtc_configuration=rtc_config,
         media_stream_constraints={"video": True, "audio": False},
+        async_processing=True, # Smooth video feed
     )
     
     if webrtc_ctx.video_receiver:
@@ -220,8 +223,10 @@ with tab2:
                 st.image(m_usb, caption=f"USB Result: {w_usb}mm Width", use_column_width=True)
             except Exception as e:
                 st.error(f"Snapshot Error: {e}")
+    else:
+        st.info("Ensure USB Cam is connected and click 'Start'.")
+        
     st.divider()
-    # Purana mobile camera input bhi rakha hai backup ke liye
     live = st.camera_input("Default Camera (Mobile/Front)")
     if live:
         img_l = cv2.imdecode(np.frombuffer(live.read(), np.uint8), 1)
@@ -231,5 +236,4 @@ with tab2:
 with tab3:
     history = pd.read_sql_query("SELECT * FROM audit_logs ORDER BY date DESC", conn)
     st.dataframe(history, use_container_width=True)
-
 
