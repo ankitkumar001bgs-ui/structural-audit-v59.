@@ -5,3 +5,5 @@ fpdf
 pandas
 numpy
 plotly
+streamlit-webrtc
+aiortc
