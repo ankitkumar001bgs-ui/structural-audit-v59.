@@ -76,10 +76,7 @@ def process_analysis(img, sensitivity, calib):
         # Filter out very small contours (noise)
         if w_rect > 1.5 and h_rect > 1.5: 
             curr_w = min(w_rect, h_rect)
-            
-            # --- FIX FOR ACCURATE LENGTH ---
-            # arcLength crack ki poori path ko naapta hai, perimeter ko 2 se divide karke
-            curr_l = cv2.arcLength(cnt, False) / 2
+            curr_l = max(w_rect, h_rect)
             
             if curr_w > max_w_px: max_w_px = curr_w
             total_len_px += curr_l # Accumulate length of all detected cracks
