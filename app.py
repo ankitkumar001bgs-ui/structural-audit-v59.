@@ -10,9 +10,10 @@ import plotly.graph_objects as go
 import io
 import os
 import gc
+# Nayi libraries for USB Camera
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 
-# --- 1. SETUP & THEME ---
+# --- 1. SETUP & THEME (v59 Final) ---
 st.set_page_config(page_title="Structural AI Audit Pro v59", layout="wide")
 
 st.markdown("""
@@ -21,14 +22,15 @@ st.markdown("""
         background-image: linear-gradient(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.85)), 
                           url('https://img.freepik.com/free-vector/abstract-architectural-blueprint-background_52683-59424.jpg') !important;
         background-size: cover !important;
+        background-attachment: fixed !important;
     }
-    h1 { color: #1E3A8A !important; text-align: center; }
+    h1 { color: #1E3A8A !important; font-weight: 800 !important; text-align: center; }
     </style>
     """, unsafe_allow_html=True)
 
 st.title("AI-Powered Structural Crack Detection System")
 
-# Database Setup
+# Database Setup (Added 'length' column)
 conn = sqlite3.connect('structural_master_v59.db', check_same_thread=False)
 c = conn.cursor()
 c.execute('''CREATE TABLE IF NOT EXISTS audit_logs 
@@ -45,49 +47,62 @@ with st.sidebar:
         st.cache_data.clear()
         st.cache_resource.clear()
         st.rerun()
+        
+    with st.expander("📚 IS Code Reference", expanded=True):
+        st.write("**IS 456:2000 Standards**")
+        st.write("• Max Width: 0.3mm\n• Repair: Grouting > 0.5mm")
     st.divider()
     custom_rate = st.number_input("Base Rate per mm² (Rs.)", value=10.0)
     base_visit_fee = st.number_input("Base Visiting Fee (Rs.)", value=200)
     calib = st.slider("Calibration", 0.01, 0.10, 0.05)
     sens = st.slider("Precision", 0.05, 1.0, 0.30)
 
-# --- 3. CORE LOGIC ---
+# --- 3. CORE LOGIC (With Precision Fix) ---
 def process_analysis(img, sensitivity, calib):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (7, 7), 0)
     edges = cv2.Canny(blur, int(sensitivity * 30), 100) 
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
     marked_img = img.copy()
     h_data = np.zeros(img.shape[:2], dtype=np.uint8)
+    
     max_w_px = 0.0; total_len_px = 0.0; total_area_px = 0.0 
     crack_pixels = []
 
     for cnt in contours:
+        # Better Precision using minAreaRect
         rect = cv2.minAreaRect(cnt)
         (x, y), (w_rect, h_rect), angle = rect
         if w_rect > 1.5 or h_rect > 1.5:
-            curr_w = min(w_rect, h_rect)
-            curr_l = max(w_rect, h_rect)
-            if curr_w > max_w_px: max_w_px = curr_w
-            total_len_px += curr_l
+            w_px = min(w_rect, h_rect)
+            l_px = max(w_rect, h_rect)
+            
+            if w_px > max_w_px: max_w_px = w_px
+            total_len_px += l_px
             total_area_px += cv2.contourArea(cnt)
+            
             cv2.drawContours(marked_img, [cnt], -1, (0, 0, 255), 2)
             cv2.drawContours(h_data, [cnt], -1, (255), -1)
             
             mask = np.zeros(gray.shape, np.uint8)
             cv2.drawContours(mask, [cnt], -1, 255, -1)
-            crack_pixels.extend(gray[mask == 255])
+            pixel_values = gray[mask == 255]
+            crack_pixels.extend(pixel_values)
 
     heatmap = cv2.applyColorMap(cv2.GaussianBlur(h_data, (51, 51), 0), cv2.COLORMAP_JET)
     mm_w = round(max_w_px * calib, 2)
     mm_l = round(total_len_px * calib, 2)
     mm_area = round(total_area_px * (calib ** 2), 2)
     
-    avg_bg = np.mean(gray)
-    avg_crack = np.mean(crack_pixels) if crack_pixels else avg_bg
-    contrast = (avg_bg - avg_crack) / (avg_bg + 1)
-    estimated_depth = round(mm_w * (0.8 + contrast * 2), 2)
+    # Depth Accuracy Improvement
+    if crack_pixels and mm_w > 0:
+        avg_crack = np.mean(crack_pixels)
+        avg_bg = np.mean(gray)
+        contrast = (avg_bg - avg_crack) / (avg_bg + 1)
+        estimated_depth = round(mm_w * (1.2 + contrast * 2), 2)
+    else:
+        estimated_depth = round(mm_w * 0.8, 2)
+    
     estimated_depth = max(0.1, min(100.0, estimated_depth))
             
     return marked_img, heatmap, mm_w, mm_l, mm_area, estimated_depth
@@ -100,23 +115,29 @@ def generate_stress_curve(mm_w, material, location):
     strain = np.linspace(0, failure_strain * 1.5, 100)
     stress = np.maximum(E * strain * (1 - (strain / (2.2 * failure_strain))), 0)
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=strain, y=stress, mode='lines', line=dict(color='#ff5733', width=3)))
-    fig.update_layout(title=f"Physics Plot: {location}", template="plotly_dark", height=250)
+    fig.add_trace(go.Scatter(x=strain, y=stress, mode='lines', name='Structural Integrity', line=dict(color='#ff5733', width=3)))
+    fig.update_layout(title=f"Physics Plot: {location}", template="plotly_dark", height=280)
     return fig
 
 def get_priority_v54(width, depth, material):
     if material == "Plaster":
-        return ("LOW", "🟢", "Safe") if width < 1.0 else ("HIGH", "🔴", "Deep")
-    return ("LOW", "🟢", "Safe") if width < 0.3 else ("MEDIUM", "🟡", "Warning") if width < 1.0 else ("HIGH", "🔴", "CRITICAL")
+        if width < 1.0 and depth < 5.0: return "LOW", "🟢", "Safe (Surface)"
+        else: return "HIGH", "🔴", "Deep Crack"
+    else:
+        if width < 0.3: return "LOW", "🟢", "Safe"
+        elif width < 1.0: return "MEDIUM", "🟡", "Warning"
+        else: return "HIGH", "🔴", "CRITICAL!"
 
 # --- 4. TABS UI ---
 tab1, tab2, tab3 = st.tabs(["🚀 Batch Audit", "📸 USB Live Cam", "📜 History"])
 
 with tab1:
-    files = st.file_uploader("Upload Crack Images", accept_multiple_files=True)
+    files = st.file_uploader("Upload Crack Images", accept_multiple_files=True, key="file_uploader_v59")
     if files:
-        mat = st.radio("Material:", ["Concrete", "Plaster"], horizontal=True)
-        loc = st.selectbox("Location:", ["Wall", "Column", "Beam", "Slab", "Surface"])
+        c1, c2 = st.columns(2)
+        with c1: mat = st.radio("Material:", ["Concrete", "Plaster"], horizontal=True)
+        with c2: loc = st.selectbox("Location:", ["Wall", "Column", "Beam", "Slab", "Surface"])
+            
         if st.button("Execute Batch Analysis", use_container_width=True):
             pdf = FPDF()
             for i, f in enumerate(files):
@@ -125,10 +146,18 @@ with tab1:
                 priority, emoji, p_text = get_priority_v54(w, depth, mat)
                 total_repair = round((area * custom_rate) + base_visit_fee, 2)
                 
-                st.subheader(f"Result {i+1}: {f.name}")
-                st.image([img, m_img, h_img], width=250)
+                st.subheader(f"Result {i+1}: {f.name} ({emoji} {p_text})")
+                m1, m2, m3, m4, m5 = st.columns(5)
+                m1.metric("Width", f"{w}mm")
+                m2.metric("Length", f"{l}mm")
+                m3.metric("Depth", f"{depth}mm")
+                m4.metric("Status", p_text)
+                m5.metric("Estimate", f"Rs.{total_repair}")
                 
-                prompt = f"Crack {w}mm x {l}mm on {loc}. Repair?"
+                st.image([img, m_img, h_img], width=250)
+                st.plotly_chart(generate_stress_curve(w, mat, loc), use_container_width=True)
+                
+                prompt = f"Analyze {w}mm width, {l}mm length, {depth}mm depth crack on {loc} ({mat}). Repair?"
                 ai_resp = client.chat.completions.create(messages=[{"role":"user","content":prompt}], model="llama-3.1-8b-instant").choices[0].message.content
                 st.info(ai_resp)
                 
@@ -136,32 +165,25 @@ with tab1:
                          (datetime.now().strftime('%Y-%m-%d'), datetime.now().strftime('%H:%M:%S'), loc, mat, f"{w}mm", f"{l}mm", f"{depth}mm", priority, f"Rs. {total_repair}", ai_resp))
                 conn.commit()
 
-                # PDF Logic Fix (No temporary files)
+                # PDF Logic
                 pdf.add_page()
-                pdf.set_font("Arial", 'B', 12)
+                pdf.set_font("Arial", 'B', 14)
                 pdf.cell(0, 10, f"STRUCTURAL REPORT - {f.name}", 1, 1, 'C')
                 pdf.set_font("Arial", size=10)
-                pdf.multi_cell(0, 8, f"Metrics: W:{w}mm | L:{l}mm | D:{depth}mm\nStatus: {p_text}\nAI Advice: {ai_resp}")
+                pdf.cell(0, 8, f"Location: {loc} | Width: {w}mm | Length: {l}mm | Depth: {depth}mm", ln=1)
+                pdf.multi_cell(0, 6, txt=ai_resp.encode('latin-1', 'replace').decode('latin-1'))
 
-            pdf_bytes = pdf.output(dest='S').encode('latin1')
-            st.download_button("📥 Download PDF", data=pdf_bytes, file_name="Report.pdf")
+            pdf_out = pdf.output(dest='S').encode('latin-1')
+            st.download_button("📥 Download PDF Report", data=pdf_out, file_name="Audit_Report.pdf")
 
 with tab2:
     st.subheader("🔌 USB External Camera")
-    c_l1, c_l2 = st.columns(2)
-    with c_l1: l_mat = st.radio("Live Material:", ["Concrete", "Plaster"], key="lm")
-    with c_l2: l_loc = st.selectbox("Live Location:", ["Wall", "Column", "Beam", "Slab", "Surface"], key="ll")
+    cl1, cl2 = st.columns(2)
+    with cl1: l_mat = st.radio("Live Material:", ["Concrete", "Plaster"], horizontal=True, key="l_mat")
+    with cl2: l_loc = st.selectbox("Live Location:", ["Wall", "Column", "Beam", "Slab", "Surface"], key="l_loc")
 
-    # RTC Fix for Connection Errors
-    rtc_config = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}]})
-    
-    webrtc_ctx = webrtc_streamer(
-        key="usb-cam-v59",
-        mode=WebRtcMode.SENDRECV,
-        rtc_configuration=rtc_config,
-        media_stream_constraints={"video": True, "audio": False},
-        async_processing=True
-    )
+    rtc_config = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
+    webrtc_ctx = webrtc_streamer(key="usb-cam-v59", mode=WebRtcMode.SENDRECV, rtc_configuration=rtc_config, media_stream_constraints={"video": True, "audio": False})
     
     if webrtc_ctx.video_receiver:
         if st.button("📸 Capture & Full Analysis", use_container_width=True):
@@ -174,22 +196,21 @@ with tab2:
                 
                 st.divider()
                 st.subheader(f"LIVE ANALYSIS: {emoji} {p_text}")
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Width", f"{w}mm"); c2.metric("Length", f"{l}mm"); c3.metric("Depth", f"{d}mm"); c4.metric("Cost", f"Rs.{cost}")
+                col1, col2, col3, col4, col5 = st.columns(5)
+                col1.metric("Width", f"{w}mm"); col2.metric("Length", f"{l}mm"); col3.metric("Depth", f"{d}mm"); col4.metric("Status", p_text); col5.metric("Cost", f"Rs.{cost}")
                 
-                st.image([m, h], width=350, caption=["Detection", "Heatmap"])
+                st.image([m, h], caption=["Detection", "Heatmap"], width=400)
                 st.plotly_chart(generate_stress_curve(w, l_mat, l_loc), use_container_width=True)
                 
-                ai_res = client.chat.completions.create(messages=[{"role":"user","content":f"Repair for {w}mm crack?"}], model="llama-3.1-8b-instant").choices[0].message.content
-                st.info(f"🤖 AI: {ai_res}")
+                ai_resp_l = client.chat.completions.create(messages=[{"role":"user","content":f"Repair for {w}mm x {l}mm crack?"}], model="llama-3.1-8b-instant").choices[0].message.content
+                st.info(f"🤖 AI Analysis: {ai_resp_l}")
                 
-                c.execute("INSERT INTO audit_logs VALUES (?,?,?,?,?,?,?,?,?,?)", 
-                         (datetime.now().strftime('%Y-%m-%d'), datetime.now().strftime('%H:%M:%S'), l_loc, l_mat, f"{w}mm", f"{l}mm", f"{d}mm", priority, f"Rs. {cost}", ai_res))
+                c.execute("INSERT INTO audit_logs VALUES (?,?,?,?,?,?,?,?,?,?)", (datetime.now().strftime('%Y-%m-%d'), datetime.now().strftime('%H:%M:%S'), l_loc, l_mat, f"{w}mm", f"{l}mm", f"{d}mm", priority, f"Rs. {cost}", ai_resp_l))
                 conn.commit()
             except Exception as e:
-                st.error("Wait for camera to load and try again.")
+                st.error(f"Snapshot Error: {e}")
 
 with tab3:
     history = pd.read_sql_query("SELECT * FROM audit_logs ORDER BY date DESC", conn)
     st.dataframe(history, use_container_width=True)
-    
+
