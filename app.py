@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 import io
 import os
 import gc
+# Nayi libraries for USB Camera
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 
 # --- 1. SETUP & THEME (v60 Final) ---
@@ -29,7 +30,7 @@ st.markdown("""
 
 st.title("AI-Powered Structural Crack Detection System")
 
-# Database Setup
+# Database Setup (Added 'length' column here)
 conn = sqlite3.connect('structural_master_v60.db', check_same_thread=False)
 c = conn.cursor()
 c.execute('''CREATE TABLE IF NOT EXISTS audit_logs 
@@ -39,7 +40,7 @@ conn.commit()
 GROQ_API_KEY = "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"
 client = Groq(api_key=GROQ_API_KEY)
 
-# --- 2. SIDEBAR (With Added Download Options) ---
+# --- 2. SIDEBAR ---
 with st.sidebar:
     st.header("🛡️ Engineering Panel")
     if st.button("🔄 Clear System Cache", use_container_width=True):
@@ -55,33 +56,11 @@ with st.sidebar:
     base_visit_fee = st.number_input("Base Visiting Fee (Rs.)", value=200)
     calib = st.slider("Calibration", 0.01, 0.10, 0.05)
     sens = st.slider("Precision", 0.05, 1.0, 0.30)
-    
-    st.divider()
-    st.subheader("📥 Export Options")
-    # CSV Download
-    history_df = pd.read_sql_query("SELECT * FROM audit_logs", conn)
-    if not history_df.empty:
-        csv = history_df.to_csv(index=False).encode('utf-8')
-        st.download_button("📊 Download CSV Report", csv, "Audit_Log.csv", "text/csv", use_container_width=True)
-    
-    # PDF Download (Session state se capture karega)
-    if 'pdf_bytes' in st.session_state:
-        st.download_button("📥 Download PDF Report", st.session_state.pdf_bytes, "Crack_Report.pdf", "application/pdf", use_container_width=True)
 
-# --- 3. CORE LOGIC (Accuracy Fixed for Concrete) ---
-def process_analysis(img, sensitivity, calib, material="Concrete"):
+# --- 3. CORE LOGIC (With Length & Improved Precision) ---
+def process_analysis(img, sensitivity, calib):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
-    # --- Accuracy Logic Added ---
-    if material == "Concrete":
-        # Concrete ke rough surface ke liye CLAHE + Fast Denoising
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-        enhanced = clahe.apply(gray)
-        blur = cv2.fastNlMeansDenoising(enhanced, None, 10, 7, 21)
-    else:
-        blur = cv2.GaussianBlur(gray, (7, 7), 0)
-    # ----------------------------
-    
+    blur = cv2.GaussianBlur(gray, (7, 7), 0)
     edges = cv2.Canny(blur, int(sensitivity * 30), 100) 
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     marked_img = img.copy()
@@ -91,34 +70,54 @@ def process_analysis(img, sensitivity, calib, material="Concrete"):
     crack_pixels = []
 
     for cnt in contours:
-        rect = cv2.minAreaRect(cnt)
+        rect = cv2.minAreaRect(cnt) # Use minAreaRect for better width/length
         (x_rect, y_rect), (w_rect, h_rect), angle = rect
         
+        # Filter out very small contours (noise)
         if w_rect > 1.5 and h_rect > 1.5: 
             curr_w = min(w_rect, h_rect)
             curr_l = max(w_rect, h_rect)
+            
             if curr_w > max_w_px: max_w_px = curr_w
-            total_len_px += curr_l
+            total_len_px += curr_l # Accumulate length of all detected cracks
             total_area_px += cv2.contourArea(cnt)
             
+            # Drawing contours for visual feedback
             cv2.drawContours(marked_img, [cnt], -1, (0, 0, 255), 2)
-            cv2.drawContours(h_data, [cnt], -1, (255), -1)
+            cv2.drawContours(h_data, [cnt], -1, (255), -1) # For heatmap generation
             
             mask = np.zeros(gray.shape, np.uint8)
             cv2.drawContours(mask, [cnt], -1, 255, -1)
-            crack_pixels.extend(gray[mask == 255])
+            pixel_values = gray[mask == 255]
+            crack_pixels.extend(pixel_values)
 
     heatmap = cv2.applyColorMap(cv2.GaussianBlur(h_data, (51, 51), 0), cv2.COLORMAP_JET)
     mm_w = round(max_w_px * calib, 2)
     mm_l = round(total_len_px * calib, 2)
     mm_area = round(total_area_px * (calib ** 2), 2)
     
-    estimated_depth = round(mm_w * 0.8, 2) if mm_w > 0 else 0
-    if estimated_depth < 0.1 and mm_w > 0: estimated_depth = 0.1
+    estimated_depth = 0.0
+    if crack_pixels and mm_w > 0:
+        avg_crack = np.mean(crack_pixels)
+        avg_bg = np.mean(gray)
+        contrast = (avg_bg - avg_crack) / (avg_bg + 1)
+        estimated_depth = round(mm_w * (0.8 + contrast), 2) # Original depth logic
+    else:
+        estimated_depth = round(mm_w * 0.6, 2)
+    
+    # Ensure depth is within reasonable bounds
+    if estimated_depth < 0.1: estimated_depth = 0.1
+    if estimated_depth > 100: estimated_depth = 100 
+
+    # 3D Effect for marked image
+    if mm_w > 0 and estimated_depth > 0:
+        depth_norm = min(estimated_depth / 50.0, 1.0)
+        for cnt in contours:
+            cv2.drawContours(marked_img, [cnt], -1, (int(255 * depth_norm), 0, 255), int(2 + depth_norm * 3))
+            cv2.drawContours(marked_img, [cnt], -1, (int(100 * depth_norm), 0, int(100 * depth_norm)), int(1 + depth_norm * 1), lineType=cv2.LINE_AA)
             
     return marked_img, heatmap, mm_w, mm_l, mm_area, estimated_depth
 
-# --- (Other helper functions like generate_stress_curve and get_priority remain same) ---
 def generate_stress_curve(mm_w, material, location):
     E_base = 35000 if material == "Concrete" else 5000 
     loc_factor = {"Column": 1.5, "Beam": 1.3, "Slab": 1.0, "Wall": 0.8}.get(location, 0.6)
@@ -128,15 +127,21 @@ def generate_stress_curve(mm_w, material, location):
     stress = np.maximum(E * strain * (1 - (strain / (2.2 * failure_strain))), 0)
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=strain, y=stress, mode='lines', name='Structural Integrity', line=dict(color='#ff5733', width=3)))
+    max_stress_idx = np.argmax(stress)
+    fig.add_trace(go.Scatter(x=[strain[max_stress_idx]], y=[stress[max_stress_idx]], 
+                             mode='markers', name='Failure Point', 
+                             marker=dict(color='red', size=10, symbol='x', line=dict(width=2, color='DarkRed'))))
     fig.update_layout(title=f"Physics Plot: {location}", template="plotly_dark", height=280)
     return fig
 
 def get_priority_v54(width, depth, material):
     if material == "Plaster":
-        if width < 1.0: return "LOW", "🟢", "Safe"
-        else: return "HIGH", "🔴", "Deep"
+        if width < 1.0 and depth < 5.0: return "LOW", "🟢", "Safe (Surface Plaster)"
+        elif (1.0 <= width < 3.0 and depth < 10.0) or (depth >= 5.0 and depth < 15.0): return "MEDIUM", "🟡", "Warning"
+        else: return "HIGH", "🔴", "Deep Crack"
     else:
-        if width < 0.3: return "LOW", "🟢", "Safe"
+        if width < 0.3 and depth < 10.0: return "LOW", "🟢", "Safe (Hairline)"
+        elif (0.3 <= width < 0.7 and depth < 20.0) or (depth >= 10.0 and depth < 30.0): return "MEDIUM", "🟡", "Warning (Structural)"
         else: return "HIGH", "🔴", "CRITICAL!"
 
 # --- 4. TABS UI ---
@@ -150,43 +155,164 @@ with tab1:
         with c2: loc = st.selectbox("Location:", ["Wall", "Column", "Beam", "Slab", "Surface"])
             
         if st.button("Execute Batch Analysis", use_container_width=True):
+            gc.collect()
             pdf = FPDF()
+            
             for i, f in enumerate(files):
                 img = cv2.imdecode(np.frombuffer(f.read(), np.uint8), 1)
-                m_img, h_img, w, l, area, depth = process_analysis(img, sens, calib, mat)
+                m_img, h_img, w, l, area, depth = process_analysis(img, sens, calib)
                 priority, emoji, p_text = get_priority_v54(w, depth, mat)
-                total_repair = round((area * custom_rate) + base_visit_fee, 2)
+                total_repair = round((area * custom_rate * (1.5 if priority=="MEDIUM" else 2.5 if priority=="HIGH" else 1.0)) + base_visit_fee, 2)
                 
-                st.subheader(f"Result {i+1}: {f.name}")
-                st.image([m_img, h_img], width=400)
+                st.subheader(f"Result {i+1}: {f.name} ({emoji} {p_text})")
+                m1, m2, m3, m4, m5 = st.columns(5) # Added one more column for Length
+                m1.metric("Width", f"{w} mm")
+                m2.metric("Length", f"{l} mm") # Display Length
+                m3.metric("Depth", f"{depth} mm")
+                m4.metric("Status", p_text)
+                m5.metric("Estimate", f"Rs. {total_repair}")
                 
-                ai_resp = client.chat.completions.create(messages=[{"role":"user","content":f"{w}mm crack on {mat}?"}], model="llama-3.1-8b-instant").choices[0].message.content
+                # Display images in columns for better alignment
+                img_col1, img_col2, img_col3 = st.columns(3)
+                with img_col1: st.image(img, caption="Original", use_column_width=True)
+                with img_col2: st.image(m_img, caption="Marked (3D)", use_column_width=True)
+                with img_col3: st.image(h_img, caption="Heatmap", use_column_width=True)
+                
+                fig = generate_stress_curve(w, mat, loc)
+                st.plotly_chart(fig, use_container_width=True, key=f"g_{i}")
+                
+                prompt = f"Analyze {w}mm width, {l}mm length and {depth}mm depth crack on {loc} ({mat}). Priority: {priority}. Cause & Repair?"
+                ai_resp = client.chat.completions.create(messages=[{"role":"user","content":prompt}], model="llama-3.1-8b-instant").choices[0].message.content
                 st.info(ai_resp)
                 
-                c.execute("INSERT INTO audit_logs VALUES (?,?,?,?,?,?,?,?,?,?)", (datetime.now().strftime('%Y-%m-%d'), datetime.now().strftime('%H:%M:%S'), loc, mat, f"{w}mm", f"{l}mm", f"{depth}mm", priority, f"Rs.{total_repair}", ai_resp))
+                # Insert into DB with Length
+                c.execute("INSERT INTO audit_logs VALUES (?,?,?,?,?,?,?,?,?,?)", 
+                         (datetime.now().strftime('%Y-%m-%d'), datetime.now().strftime('%H:%M:%S'), loc, mat, f"{w}mm", f"{l}mm", f"{depth}mm", priority, f"Rs. {total_repair}", ai_resp))
                 conn.commit()
-
-                # Build PDF
-                pdf.add_page()
-                pdf.set_font("Arial", 'B', 16); pdf.cell(0, 10, f"Report: {f.name}", 0, 1)
-                pdf.set_font("Arial", size=12); pdf.cell(0, 10, f"Width: {w}mm | Length: {l}mm | Depth: {depth}mm", 0, 1)
             
-            st.session_state.pdf_bytes = pdf.output(dest='S').encode('latin-1')
-            st.rerun()
+                # PDF Generation Logic (Fixed for image positioning)
+                pdf.add_page()
+                pdf.set_font("Arial", 'B', 16)
+                pdf.cell(0, 10, "STRUCTURAL CRACK REPORT", 0, 1, 'C')
+                pdf.set_font("Arial", size=12)
+                pdf.cell(0, 8, f"Report for: {f.name}", 0, 1, 'L')
+                pdf.cell(0, 8, f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", 0, 1, 'L')
+                pdf.cell(0, 8, f"Location: {loc} | Material: {mat}", 0, 1, 'L')
+                pdf.cell(0, 8, f"Width: {w}mm | Length: {l}mm | Depth: {depth}mm", 0, 1, 'L')
+                pdf.cell(0, 8, f"Priority: {p_text} | Estimated Cost: Rs. {total_repair}", 0, 1, 'L')
+                pdf.ln(5)
+
+                # Save images temporarily and add to PDF
+                original_img_path = f"temp_original_{i}.png"
+                marked_img_path = f"temp_marked_{i}.png"
+                heatmap_img_path = f"temp_heatmap_{i}.png"
+                
+                cv2.imwrite(original_img_path, img)
+                cv2.imwrite(marked_img_path, m_img)
+                cv2.imwrite(heatmap_img_path, h_img)
+                
+                pdf.image(original_img_path, x=10, y=pdf.get_y(), w=60)
+                pdf.image(marked_img_path, x=75, y=pdf.get_y(), w=60)
+                pdf.image(heatmap_img_path, x=140, y=pdf.get_y(), w=60)
+                pdf.ln(70) # Move cursor down after images
+
+                pdf.set_font("Arial", 'B', 12)
+                pdf.cell(0, 10, "AI Analysis & Recommendations:", 0, 1, 'L')
+                pdf.set_font("Arial", size=10)
+                clean_text = ai_resp.encode('latin-1', 'replace').decode('latin-1')
+                pdf.multi_cell(0, 5, txt=clean_text)
+                
+                # Clean up temporary files
+                os.remove(original_img_path)
+                os.remove(marked_img_path)
+                os.remove(heatmap_img_path)
+            
+            try:
+                pdf_output = pdf.output(dest='S')
+                pdf_bytes = pdf_output.encode('latin-1') if isinstance(pdf_output, str) else pdf_output
+                st.download_button(label="📥 Download PDF Report", data=pdf_bytes, file_name="Audit_Report.pdf", mime="application/pdf", use_container_width=True)
+            except Exception as e:
+                st.error(f"PDF Final Error: {str(e)}")
 
 with tab2:
     st.subheader("🔌 USB External Camera")
-    rtc_config = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
-    webrtc_streamer(key="usb-cam-v60", mode=WebRtcMode.SENDRECV, rtc_configuration=rtc_config)
+    
+    # Input options for Live Analysis
+    c_live1, c_live2 = st.columns(2)
+    with c_live1: mat_l = st.radio("Live Material:", ["Concrete", "Plaster"], horizontal=True, key="mat_live")
+    with c_live2: loc_l = st.selectbox("Live Location:", ["Wall", "Column", "Beam", "Slab", "Surface"], key="loc_live")
+
+    # USB Camera configuration with more STUN servers for better connection
+    rtc_config = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}]})
+    webrtc_ctx = webrtc_streamer(
+        key="usb-cam-v60", # Unique key
+        mode=WebRtcMode.SENDRECV,
+        rtc_configuration=rtc_config,
+        media_stream_constraints={"video": True, "audio": False},
+        async_processing=True
+    )
+    
+    if webrtc_ctx.video_receiver: # Check if video_receiver is available
+        if st.button("📸 Capture & Analyze Snapshot", use_container_width=True):
+            try:
+                # 1. Capture Frame
+                frame = webrtc_ctx.video_receiver.get_frame()
+                img_usb = frame.to_ndarray(format="bgr24")
+                
+                # 2. Run Analysis Logic
+                m_usb, h_usb, w, l, area, depth = process_analysis(img_usb, sens, calib)
+                priority, emoji, p_text = get_priority_v54(w, depth, mat_l)
+                total_repair = round((area * custom_rate * (1.5 if priority=="MEDIUM" else 2.5 if priority=="HIGH" else 1.0)) + base_visit_fee, 2)
+                
+                # 3. Display Detailed Results
+                st.divider()
+                st.subheader(f"Live Result: {emoji} {p_text}")
+                
+                m1, m2, m3, m4, m5 = st.columns(5) # Added Length column
+                m1.metric("Width", f"{w} mm")
+                m2.metric("Length", f"{l} mm") # Display Length
+                m3.metric("Depth", f"{depth} mm")
+                m4.metric("Status", p_text)
+                m5.metric("Estimate", f"Rs. {total_repair}")
+                
+                # Display marked image and heatmap side-by-side
+                st.image([m_usb, h_usb], caption=["Marked Detection", "Heatmap"], width=350)
+                
+                # Stress Curve
+                fig_l = generate_stress_curve(w, mat_l, loc_l)
+                st.plotly_chart(fig_l, use_container_width=True)
+                
+                # AI Insights
+                prompt_l = f"Analyze {w}mm width, {l}mm length and {depth}mm depth crack on {loc_l} ({mat_l}). Priority: {priority}. Cause & Repair?"
+                ai_resp_l = client.chat.completions.create(messages=[{"role":"user","content":prompt_l}], model="llama-3.1-8b-instant").choices[0].message.content
+                st.info(ai_resp_l)
+                
+                # 4. Save to History
+                c.execute("INSERT INTO audit_logs VALUES (?,?,?,?,?,?,?,?,?,?)", 
+                         (datetime.now().strftime('%Y-%m-%d'), datetime.now().strftime('%H:%M:%S'), loc_l, mat_l, f"{w}mm", f"{l}mm", f"{depth}mm", priority, f"Rs. {total_repair}", ai_resp_l))
+                conn.commit()
+                st.success("Analysis saved to History!")
+
+            except Exception as e:
+                st.error(f"Analysis Error: {e}")
+    else:
+        st.warning("Waiting for USB Camera to be ready. Please allow camera access if prompted.")
+        
+    st.divider()
+    # Backup camera input (Original code se rakha hai, for mobile/front camera)
+    live = st.camera_input("Default Camera (Mobile/Front)")
+    if live:
+        img_l = cv2.imdecode(np.frombuffer(live.read(), np.uint8), 1)
+        m_l, _, w_l, l_l, _, d_l = process_analysis(img_l, sens, calib) # Added l_l (length) here
+        st.image(m_l, caption=f"Detected: W:{w_l}mm | L:{l_l}mm | D:{d_l}mm", use_column_width=True) # Display Length here
 
 with tab3:
     history = pd.read_sql_query("SELECT * FROM audit_logs ORDER BY date DESC", conn)
-    st.dataframe(history, use_container_width=True)
-
-
-
-
-
+    # Reorder columns for better readability, and ensure 'length' is displayed
+    if 'length' not in history.columns: # Add length if not present (for old DB entries)
+        history['length'] = 'N/A' 
+    display_columns = ['date', 'time', 'location', 'material', 'width', 'length', 'depth', 'priority', 'cost', 'details']
+    st.dataframe(history[display_columns], use_container_width=True)
 
 
 
