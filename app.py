@@ -36,7 +36,7 @@ c.execute('''CREATE TABLE IF NOT EXISTS audit_logs
              (date TEXT, time TEXT, location TEXT, material TEXT, width TEXT, length TEXT, depth TEXT, priority TEXT, cost TEXT, details TEXT)''')
 conn.commit()
 
-GROQ_API_KEY = "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"
+GROQ_API_KEY = "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"
 client = Groq(api_key=GROQ_API_KEY)
 
 # --- 2. SIDEBAR ---
